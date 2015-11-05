@@ -7,8 +7,11 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
+	"runtime"
 
 	"github.com/maniktaneja/perf/fetch"
+	"github.com/oxtoacart/bpool"
+	"github.com/pquerna/ffjson/ffjson"
 	_ "net/http/pprof"
 )
 
@@ -44,6 +47,44 @@ func million(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// send a million documents
+func bufmillion(w http.ResponseWriter, r *http.Request) {
+
+	bufpool := bpool.NewBufferPool(1024)
+
+	for i := 0; i < 10000000; i++ {
+		docId := i % docs.number
+		item := docs.docMap[docs.docList[docId]]
+
+		pw := bufpool.Get()
+		err := json.NewEncoder(pw).Encode(&item)
+		if err != nil {
+			log.Fatalf("Error %v", err)
+		}
+
+		fmt.Fprintf(w, string(pw.Bytes())) // send data to client side
+		bufpool.Put(pw)
+		fmt.Fprintf(w, "\n\n")
+	}
+}
+
+// send a million documents
+func ffmillion(w http.ResponseWriter, r *http.Request) {
+
+	for i := 0; i < 10000000; i++ {
+		docId := i % docs.number
+		item := docs.docMap[docs.docList[docId]]
+		bytes, err := ffjson.Marshal(item)
+		if err != nil {
+			fmt.Fprintf(w, "Failed to marshal document %v", err)
+			return
+		}
+		fmt.Fprintf(w, string(bytes)) // send data to client side
+		fmt.Fprintf(w, "\n\n")
+		ffjson.Pool(bytes)
+	}
+}
+
 // send a million string documents
 func millionstr(w http.ResponseWriter, r *http.Request) {
 
@@ -75,7 +116,10 @@ func main() {
 	http.HandleFunc("/random", randDocument) // set router
 	http.HandleFunc("/million", million)
 	http.HandleFunc("/millionstr", millionstr)
+	http.HandleFunc("/ffmillion", ffmillion)
+	http.HandleFunc("/bufmillion", bufmillion)
 
+	runtime.GOMAXPROCS(runtime.NumCPU())
 	docMap := fetch.FetchDocs(*server, *bucket)
 	if len(docMap) == 0 {
 		log.Fatalf("Failed to fetch documents")
