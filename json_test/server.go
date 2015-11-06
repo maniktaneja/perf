@@ -69,6 +69,28 @@ func bufmillion(w http.ResponseWriter, r *http.Request) {
 }
 
 // send a million documents
+func workmillion(w http.ResponseWriter, r *http.Request) {
+
+	notify := w.(http.CloseNotifier).CloseNotify()
+	jd := make(chan Result, 1024)
+	for i := 0; i < 10000000; i++ {
+		docId := i % docs.number
+		item := docs.docMap[docs.docList[docId]]
+
+		job := Job{raw: item, outch: jd}
+		JobQueue <- job
+		select {
+		case result := <-jd:
+			fmt.Fprintf(w, string(result.data.Bytes())+"\n\n")
+			result.bufpool.Put(result.data)
+		case <-notify:
+			return
+		}
+
+	}
+}
+
+// send a million documents
 func ffmillion(w http.ResponseWriter, r *http.Request) {
 
 	for i := 0; i < 10000000; i++ {
@@ -118,8 +140,13 @@ func main() {
 	http.HandleFunc("/millionstr", millionstr)
 	http.HandleFunc("/ffmillion", ffmillion)
 	http.HandleFunc("/bufmillion", bufmillion)
+	http.HandleFunc("/workmillion", workmillion)
 
 	runtime.GOMAXPROCS(runtime.NumCPU())
+	// start the thread pool
+	dispatcher := NewDispatcher()
+	dispatcher.Run()
+
 	docMap := fetch.FetchDocs(*server, *bucket)
 	if len(docMap) == 0 {
 		log.Fatalf("Failed to fetch documents")
